@@ -1,0 +1,472 @@
+
+
+#include "SPI.h"
+#include "Adafruit_WS2801.h"
+#include <Wire.h>
+
+#define VCNL4000_ADDRESS 0x13  //I2C Address of the board
+
+// VCNL4000 Register Map
+#define COMMAND_0 0x80  // starts measurments, relays data ready info
+#define PRODUCT_ID 0x81  // product ID/revision ID, should read 0x11
+#define IR_CURRENT 0x83  // sets IR current in steps of 10mA 0-200mA
+#define AMBIENT_PARAMETER 0x84  // Configures ambient light measures
+#define AMBIENT_RESULT_MSB 0x85  // high byte of ambient light measure
+#define AMBIENT_RESULT_LSB 0x86  // low byte of ambient light measure
+#define PROXIMITY_RESULT_MSB 0x87  // High byte of proximity measure
+#define PROXIMITY_RESULT_LSB 0x88  // low byte of proximity measure
+#define PROXIMITY_FREQ 0x89  // Proximity IR test signal freq, 0-3
+#define PROXIMITY_MOD 0x8A  // proximity modulator timing
+
+
+
+
+uint8_t dataPin  = 2;    // Yellow wire on Adafruit Pixels
+uint8_t clockPin = 3;    // Green wire on Adafruit Pixels
+
+
+Adafruit_WS2801 strip = Adafruit_WS2801(5, dataPin, clockPin);
+
+
+const int sensorPin = 0;
+
+
+int lightLevel[] = {0}, high = 10000, low = 100, stripLight;
+boolean firstTime = true;
+unsigned long pastTime = 0, currentTime = 0;
+int ambientValue, proximityValue;
+
+
+
+  
+void setup()
+{  
+  Serial.begin(9600);
+  
+  strip.begin();
+  strip.show();
+  
+  
+  Wire.begin();  // initialize I2C stuff
+  
+    
+  /* Test that the device is working correctly */
+  byte temp = readByte(PRODUCT_ID);
+
+  //Serial.print("below readbyte");
+
+  if (temp != 0x11)  // Product ID Should be 0x11
+  {
+    Serial.print("Something's wrong. Not reading correct ID: 0x");
+    Serial.println(temp, HEX);
+  }
+  else
+    Serial.println("VNCL4000 Online...");
+  
+  /* Now some VNCL400 initialization stuff
+     Feel free to play with any of these values, but check the datasheet first!*/
+  writeByte(AMBIENT_PARAMETER, 0x0F);  // Single conversion mode, 128 averages
+  writeByte(IR_CURRENT, 20);  // Set IR current to 200mA
+  writeByte(PROXIMITY_FREQ, 2);  // 781.25 kHz
+  writeByte(PROXIMITY_MOD, 0x81);  // 129, recommended by Vishay
+  
+  
+  
+  
+}
+
+
+void loop()
+{
+  
+  int i = 0, j = 0, difference = 0;
+  
+ 
+  
+  /* The loop just continuously reads the ambient and proximity values
+  and spits them out over serial. */
+  ambientValue = readAmbient();
+  proximityValue = readProximity();
+  //Serial.print(ambientValue, DEC);
+  //Serial.print("\t");
+  Serial.println(proximityValue, DEC);
+  delay(100);  // You may want to uncomment this for visibility
+  
+  
+  
+  
+  stripLight = 0;
+    
+       
+  //for (i = 0; i < 10; i++) {
+    //lightLevel[i] = analogRead(sensorPin);
+    //stripLight = lightLevel[i] + stripLight;
+  //}
+  //
+  //stripLight = stripLight/10;
+  
+  stripLight = ambientValue;
+  
+  autoTune();  // have the Arduino do the work for us! 
+  
+  
+   
+  Serial.print("stripLight: ");
+  Serial.println(stripLight);
+  //Serial.println(firstTime); 
+   
+   
+      
+  if ((stripLight == 0) && (proximityValue < 5000)){
+    if (firstTime) {
+      firstTime = !firstTime;
+      
+      pastTime = currentTime;
+      
+      for (j = 0; j < 1920; j++) {
+        strip.setPixelColor(0, Color(j/8,j/8,j/16));
+        strip.setPixelColor(1, Color(j/8,j/8,j/16));
+        strip.setPixelColor(2, Color(j/8,j/8,j/16));
+        strip.setPixelColor(3, Color(j/8,j/8,j/16));
+        strip.setPixelColor(4, Color(j/8,j/8,j/16));
+      
+        strip.show();
+      }
+      
+    }
+    
+    /*
+    currentTime = millis();
+    difference = currentTime - pastTime;
+    
+    if (difference > 8000) {
+      for (i = 0; i < 5; i++) strip.setPixelColor(i, Color(0,0,0));
+      strip.show();
+      delay(500);
+      
+      for (i = 0; i < 5; i++) strip.setPixelColor(i, Color(255,0,0));
+      strip.show();
+      delay(500);
+    }
+    */
+    
+     
+  }
+  else if ((stripLight >= 1) || (proximityValue > 3001)) {
+    for (i = 0; i < 5; i++) {
+      strip.setPixelColor(i, Color(0,0,0));
+    }
+    
+    if (!firstTime) {
+      for (j = 960; j > 0; j--) {
+        strip.setPixelColor(0, Color(j/4,j/4,j/8));
+        strip.setPixelColor(1, Color(j/4,j/4,j/8));
+        strip.setPixelColor(2, Color(j/4,j/4,j/8));
+        strip.setPixelColor(3, Color(j/4,j/4,j/8));
+        strip.setPixelColor(4, Color(j/4,j/4,j/8));
+      
+        strip.show();
+      }
+      firstTime = !firstTime;
+    }
+    
+  }
+  
+  strip.show();
+  
+  //Serial.print("stripLight: ");
+  //Serial.print(stripLight);
+  //Serial.print("      dummyInt: ");
+  //Serial.println(dummyInt);
+  
+}
+
+
+
+void autoTune()
+{
+
+  
+  if (stripLight < low)
+  {
+    low = stripLight;
+  }
+
+  
+  if (stripLight > high)
+  {
+    high = stripLight;
+  }
+  
+  
+  stripLight = map(stripLight, low, high, 0, 255);
+  stripLight = constrain(stripLight, 0, 255);
+   
+  
+}
+
+// Create a 24 bit color value from R,G,B
+uint32_t Color(byte r, byte g, byte b)
+{
+  uint32_t c;
+  c = r;
+  c <<= 8;
+  c |= g;
+  c <<= 8;
+  c |= b;
+  return c;
+}
+
+
+
+
+// readProximity() returns a 16-bit value from the VCNL4000's proximity data registers
+unsigned int readProximity()
+{
+  unsigned int data;
+  byte temp;
+  
+  //Serial.print("In proximity");
+  
+  temp = readByte(COMMAND_0);
+  
+  //Serial.print(":  after readbyte");
+  
+  writeByte(COMMAND_0, temp | 0x08);  // command the sensor to perform a proximity measure
+  
+  //Serial.println(":   after writebyte");
+  
+  while(!(readByte(COMMAND_0)&0x20)) 
+    ;  // Wait for the proximity data ready bit to be set
+  data = readByte(PROXIMITY_RESULT_MSB) << 8;
+  data |= readByte(PROXIMITY_RESULT_LSB);
+  
+  return data;
+}
+
+// readAmbient() returns a 16-bit value from the VCNL4000's ambient light data registers
+unsigned int readAmbient()
+{
+  unsigned int data;
+  byte temp;
+  
+  temp = readByte(COMMAND_0);
+  writeByte(COMMAND_0, temp | 0x10);  // command the sensor to perform ambient measure
+  
+  while(!(readByte(COMMAND_0)&0x40)) 
+    ;  // wait for the proximity data ready bit to be set
+  data = readByte(AMBIENT_RESULT_MSB) << 8;
+  data |= readByte(AMBIENT_RESULT_LSB);
+  
+  return data;
+}
+
+// writeByte(address, data) writes a single byte of data to address
+void writeByte(byte address, byte data)
+{
+  Wire.beginTransmission(VCNL4000_ADDRESS);
+  Wire.write(address);
+  Wire.write(data);
+  Wire.endTransmission();
+}
+
+// readByte(address) reads a single byte of data from address
+byte readByte(byte address)
+{
+  byte data;
+  
+  //Serial.println("in readbyte");
+  
+  Wire.beginTransmission(VCNL4000_ADDRESS);
+  //Serial.println("below wire.begin");
+  Wire.write(address);
+  //Serial.println("write address");
+  Wire.endTransmission();
+  //Serial.println("end trans");
+  delay(100);
+  Wire.requestFrom(VCNL4000_ADDRESS, 1);
+  //Serial.println("requestfrom");
+  while(!Wire.available())
+    ;
+  //Serial.println("below while");
+  data = Wire.read();
+  //Serial.println("after data.read");
+  return data;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// Choose which 2 pins you will use for output.
+// Can be any valid output pins.
+// The colors of the wires may be totally different so
+// BE SURE TO CHECK YOUR PIXELS TO SEE WHICH WIRES TO USE!
+
+// Don't forget to connect the ground wire to Arduino ground,
+// and the +5V wire to a +5V supply
+
+// Set the first variable to the NUMBER of pixels. 25 = 25 pixels in a row
+
+// As usual, we'll create constants to name the pins we're using.
+// This will make it easier to follow the code below.
+
+//const int ledPin = 9;
+
+// We'll also set up some global variables for the light level:
+
+// Choose which 2 pins you will use for output.
+// Can be any valid output pins.
+// The colors of the wires may be totally different so
+// BE SURE TO CHECK YOUR PIXELS TO SEE WHICH WIRES TO USE!
+
+// Don't forget to connect the ground wire to Arduino ground,
+// and the +5V wire to a +5V supply
+
+// Set the first variable to the NUMBER of pixels. 25 = 25 pixels in a row
+
+// As usual, we'll create constants to name the pins we're using.
+// This will make it easier to follow the code below.
+
+//const int ledPin = 9;
+
+// We'll also set up some global variables for the light level:
+
+  // We'll set up the LED pin to be an output.
+  // (We don't need to do anything special to use the analog input.)
+
+
+  // Just as we've done in the past, we'll use the analogRead()
+  // function to measure the voltage coming from the photoresistor
+  // resistor pair. This number can range between 0 (0 Volts) and
+  // 1023 (5 Volts), but this circuit will have a smaller range
+  // between dark and light.
+
+  // The above functions will alter lightLevel to be cover the
+  // range from full-on to full-off. Now we can adjust the
+  // brightness of the LED:
+
+  //strip.setBrightness(lightLevel/10);
+  
+
+
+
+
+  //analogWrite(ledPin, lightLevel);
+  
+  // The above statement will brighten the LED along with the
+  // light level. To do the opposite, replace "lightLevel" in the
+  // above analogWrite() statement with "255-lightLevel".
+  // Now you've created a night-light!
+  // As we mentioned above, the light-sensing circuit we built
+  // won't have a range all the way from 0 to 1023. It will likely
+  // be more like 300 (dark) to 800 (light). If you run this sketch
+  // as-is, the LED won't fully turn off, even in the dark.
+  
+  // You can accommodate the reduced range by manually 
+  // tweaking the "from" range numbers in the map() function.
+  // Here we're using the full range of 0 to 1023.
+  // Try manually changing this to a smaller range (300 to 800
+  // is a good guess), and try it out again. If the LED doesn't
+  // go completely out, make the low number larger. If the LED
+  // is always too bright, make the high number smaller.
+
+  // Remember you're JUST changing the 0, 1023 in the line below!
+
+  // Now we'll return to the main loop(), and send lightLevel
+  // to the LED.
+
+  // As we mentioned above, the light-sensing circuit we built
+  // won't have a range all the way from 0 to 1023. It will likely
+  // be more like 300 (dark) to 800 (light).
+  
+  // In the manualTune() function above, you need to repeatedly
+  // change the values and try the program again until it works.
+  // But why should you have to do that work? You've got a
+  // computer in your hands that can figure things out for itself!
+
+  // In this function, the Arduino will keep track of the highest
+  // and lowest values that we're reading from analogRead().
+
+  // If you look at the top of the sketch, you'll see that we've
+  // initialized "low" to be 1023. We'll save anything we read
+  // that's lower than that:
+
+  // We also initialized "high" to be 0. We'll save anything
+  // we read that's higher than that:
+
+  // Once we have the highest and lowest values, we can stick them
+  // directly into the map() function. No manual tweaking needed!
+  
+  // One trick we'll do is to add a small offset to low and high,
+  // to ensure that the LED is fully-off and fully-on at the limits
+  // (otherwise it might flicker a little bit).
+
+  // Now we'll return to the main loop(), and send lightLevel
+  // to the LED.
+
+
+
+
+
+// We now want to use this number to control the brightness of
+  // the LED. But we have a problem: the analogRead() function
+  // returns values between 0 and 1023, and the analogWrite()
+  // function wants values from 0 to 255.
+
+  // We can solve this by using two handy functions called map()
+  // and constrain(). Map will change one range of values into
+  // another range. If we tell map() our "from" range is 0-1023,
+  // and our "to" range is 0-255, map() will squeeze the larger
+  // range into the smaller. (It can do this for any two ranges.)
+ 
+  // lightLevel = map(lightLevel, 0, 1023, 0, 255);
+ 
+  // Because map() could still return numbers outside the "to" 
+  // range, (if they're outside the "from" range), we'll also use
+  // a function called constrain() that will "clip" numbers into
+  // a given range. If the number is above the range, it will reset
+  // it to be the highest number in the range. If the number is
+  // below the range, it will reset it to the lowest number.
+  // If the number is within the range, it will stay the same.
+  
+  // lightLevel = constrain(lightLevel, 0, 255);
+  
+  // Here's one last thing to think about. The circuit we made
+  // won't have a range all the way from 0 to 5 Volts. It will
+  // be a smaller range, such as 300 (dark) to 800 (light).
+  // If we just pass this number directly to map(), the LED will
+  // change brightness, but it will never be completely off or
+  // completely on.
+  
+  // You can fix this two ways, each of which we'll show
+  // in the functions below. Uncomment ONE of them to
+  // try it out:
+
+  //manualTune();  // manually change the range from light to dark
+  
+  /*
+void manualTune()
+{
+
+
+
+  lightLevel = map(lightLevel, 0, 1023, 0, 255);
+  lightLevel = constrain(lightLevel, 0, 255);
+
+} 
+*/
